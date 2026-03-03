@@ -1,0 +1,28 @@
+# Instagram exports (personal data)
+followers.csv
+following.csv
+
+# Generated reports
+report_*.pdf
+
+# Runtime state
+last_changes.csv
+snapshot.csv
+history.csv
+
+# Data folder (if used locally)
+data/
+
+# Profile picture cache
+cache-pfp/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db

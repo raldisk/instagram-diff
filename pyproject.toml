@@ -1,0 +1,27 @@
+[project]
+name = "instagram-diff"
+version = "1.0.0"
+description = "Deterministic Instagram followers/following diff engine with PDF reporting"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+
+dependencies = [
+    "reportlab>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+instagram-diff = "tracker.run_tracker:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tracker"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
