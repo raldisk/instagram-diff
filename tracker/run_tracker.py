@@ -177,29 +177,59 @@ def load_history(path):
     data = {}
     if not os.path.exists(path):
         return data
-    with open(path, encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            data.setdefault(row["Username"], []).append(row)
+    try:
+        validate_csv(path, set(_HISTORY_FIELDS))
+        with open(path, encoding="utf-8", newline="") as f:
+            for row in csv.DictReader(f):
+                if not row.get("Username"):
+                    log.warning("Skipping malformed history row: %r", row)
+                    continue
+                data.setdefault(row["Username"], []).append(row)
+    except PermissionError:
+        log.error(f"Permission denied reading {path}")
+        raise SystemExit(1)
+    except ValueError as e:
+        log.error(str(e))
+        raise SystemExit(1)
     return data
 
+_HISTORY_FIELDS = ["Date", "Username", "Full Name", "Event", "Old Status", "New Status"]
+
 def append_history(path, events):
-    """Append events to history CSV. flush+fsync after write to minimize partial-line corruption."""
-    is_new = not os.path.exists(path)
+    """Atomic append to history CSV.
+
+    Reads existing rows, merges new events, then writes the full file via
+    _atomic_csv_write (NamedTemporaryFile + Path.replace). A crash at any
+    point leaves the original file intact — no torn rows possible.
+    """
+    p = Path(path)
+    existing: list[list] = []
+
+    if p.exists():
+        try:
+            validate_csv(path, set(_HISTORY_FIELDS))
+            with open(path, encoding="utf-8", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if not row.get("Username"):
+                        log.warning("Skipping malformed history row: %r", row)
+                        continue
+                    existing.append([row[k] for k in _HISTORY_FIELDS])
+        except PermissionError:
+            log.error(f"Permission denied reading {path} - history not updated.")
+            raise SystemExit(1)
+        except ValueError as e:
+            log.error(str(e))
+            raise SystemExit(1)
+
+    new_rows = [
+        [e["date"], e["username"], e["full_name"],
+         e["event"], e["old_status"], e["new_status"]]
+        for e in events
+    ]
+
     try:
-        with open(path, "a", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            if is_new:
-                w.writerow(["Date", "Username", "Full Name", "Event", "Old Status", "New Status"])
-            for e in events:
-                w.writerow([
-                    e["date"], e["username"], e["full_name"],
-                    e["event"], e["old_status"], e["new_status"],
-                ])
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except OSError:
-                log.debug("os.fsync unavailable or failed for history file.")
+        _atomic_csv_write(path, _HISTORY_FIELDS, existing + new_rows)
     except PermissionError:
         log.error(f"Permission denied writing {path} - history not updated.")
         raise SystemExit(1)
@@ -371,11 +401,13 @@ def _add_page_number(canvas, doc):
 
 # -- PDF GENERATION -----------------------------------------------------------
 def generate_report(followers, following, snapshot,
-                     new_accounts, returned, removed_accounts, status_map):
-    all_current = set(followers) | set(following)
+                     new_accounts, returned, removed_accounts, status_map,
+                     output_pdf=None):
+    all_current  = set(followers) | set(following)
+    output_pdf   = output_pdf or OUTPUT_PDF
 
     doc = SimpleDocTemplate(
-        OUTPUT_PDF, pagesize=A4,
+        output_pdf, pagesize=A4,
         leftMargin=15*mm, rightMargin=15*mm,
         topMargin=15*mm, bottomMargin=18*mm,
     )
@@ -496,54 +528,60 @@ def generate_report(followers, following, snapshot,
     ]
 
     doc.build(story, onFirstPage=_add_page_number, onLaterPages=_add_page_number)
-    log.info(f"Report saved: {OUTPUT_PDF}")
+    log.info(f"Report saved: {output_pdf}")
 
 # -- MAIN ---------------------------------------------------------------------
-if __name__ == "__main__":
+def main(argv=None):
+    """
+    Entry point for both `python run_tracker.py` and the installed
+    `instagram-diff` console script defined in pyproject.toml.
+    All paths are passed as local variables — no module-level globals
+    are mutated.
+    """
     parser = argparse.ArgumentParser(description="Generate Instagram diff report")
     parser.add_argument("--followers", default=FOLLOWERS_CSV)
     parser.add_argument("--following", default=FOLLOWING_CSV)
-    parser.add_argument("--snapshot", default=SNAPSHOT_CSV)
-    parser.add_argument("--history",  default=HISTORY_CSV)
-    parser.add_argument("--output",   default=OUTPUT_PDF)
-    parser.add_argument("--debug",    action="store_true", help="Enable debug logging")
-    parser.add_argument("--no-pdf",   action="store_true", help="Skip PDF generation (dry run)")
-    args = parser.parse_args()
+    parser.add_argument("--snapshot",  default=SNAPSHOT_CSV)
+    parser.add_argument("--history",   default=HISTORY_CSV)
+    parser.add_argument("--output",    default=OUTPUT_PDF)
+    parser.add_argument("--debug",     action="store_true", help="Enable debug logging")
+    parser.add_argument("--no-pdf",    action="store_true", help="Skip PDF generation (dry run)")
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.DEBUG if args.debug else logging.INFO,
         format="  %(message)s",
     )
 
-    # Override globals with CLI args
-    FOLLOWERS_CSV    = args.followers
-    FOLLOWING_CSV    = args.following
-    SNAPSHOT_CSV     = args.snapshot
-    HISTORY_CSV      = args.history
-    OUTPUT_PDF       = args.output
+    # Local path variables — module-level constants are never overwritten
+    followers_csv    = args.followers
+    following_csv    = args.following
+    snapshot_csv     = args.snapshot
+    history_csv      = args.history
+    output_pdf       = args.output
 
     log.info("Loading data...")
 
-    followers = load_export(FOLLOWERS_CSV)
-    following = load_export(FOLLOWING_CSV)
+    followers = load_export(followers_csv)
+    following = load_export(following_csv)
 
     all_current = set(followers) | set(following)
     status_map  = build_status_map(all_current, followers, following)
 
-    if not os.path.exists(SNAPSHOT_CSV):
+    if not os.path.exists(snapshot_csv):
         log.info("No snapshot.csv found - creating baseline...")
-        save_snapshot(SNAPSHOT_CSV, all_current, followers, following, status_map)
+        save_snapshot(snapshot_csv, all_current, followers, following, status_map)
         log.info(f"snapshot.csv created with {len(all_current)} accounts.")
 
-    snapshot = load_snapshot(SNAPSHOT_CSV)
-    history  = load_history(HISTORY_CSV)
+    snapshot = load_snapshot(snapshot_csv)
+    history  = load_history(history_csv)
 
     new_accounts, returned, removed_accounts, events = detect_changes(
         all_current, snapshot, history, status_map)
 
     # Enrich events with full names from current exports
     export_names = {
-        u: (followers.get(u) or following.get(u) or {}).get("full_name","")
+        u: (followers.get(u) or following.get(u) or {}).get("full_name", "")
         for u in all_current
     }
     for e in events:
@@ -554,13 +592,13 @@ if __name__ == "__main__":
 
     if has_changes:
         log.info("Logging changes to history.csv...")
-        append_history(HISTORY_CSV, events)
+        append_history(history_csv, events)
         save_last_changes(
             LAST_CHANGES_CSV, new_accounts, returned,
             removed_accounts, snapshot, followers, following, status_map,
         )
         log.info("Updating snapshot...")
-        save_snapshot(SNAPSHOT_CSV, all_current, followers, following, status_map)
+        save_snapshot(snapshot_csv, all_current, followers, following, status_map)
     else:
         new_accounts, returned, removed_accounts = load_last_changes(LAST_CHANGES_CSV)
         log.info("No new changes - retaining last recorded diff.")
@@ -583,7 +621,12 @@ if __name__ == "__main__":
         generate_report(
             followers, following, snapshot,
             new_accounts, returned, removed_accounts, status_map,
+            output_pdf=output_pdf,
         )
     else:
         log.info("Skipping PDF generation (--no-pdf).")
     log.info("Done!")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

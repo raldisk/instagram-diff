@@ -7,6 +7,54 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.1] — 2026-03-08
+
+### Python Tracker (`tracker/run_tracker.py`, `tracker/download_pics.py`)
+
+#### Fixed
+
+- **P0 — Missing `main()` entry point.** The `if __name__ == "__main__":` block in
+  `run_tracker.py` has been wrapped in `def main(argv=None):` and called via
+  `raise SystemExit(main())`. The `pyproject.toml` entry point
+  `tracker.run_tracker:main` now resolves correctly. Running
+  `uv run instagram-diff` or any installed script invocation no longer raises
+  `AttributeError`.
+
+- **P0 — Version mismatch.** `pyproject.toml` version corrected from `1.0.0` to
+  `4.0.1` to match the CHANGELOG, userscript `@version`, and all other version
+  references.
+
+- **P1 — `append_history` is now atomic.** The previous implementation used
+  `open(..., "a")` with `flush()` + `fsync()`, which could produce a torn/partial
+  row if the process crashed mid-write between multiple events. The rewrite reads
+  existing rows, merges new events in memory, then writes the full file via
+  `_atomic_csv_write` (`NamedTemporaryFile` + `Path.replace()`). A crash at any
+  point leaves the original `history.csv` intact. Additionally, `load_history` now
+  calls `validate_csv()` and skips malformed rows with a warning, consistent with
+  the defensive pattern already present in `load_export` and `load_snapshot`.
+
+- **P1 — `download_pics.py` module-level side effect removed.** `os.makedirs(PICS_DIR)`
+  was executing unconditionally at import time, creating a `cache-pfp/` directory
+  in the working directory whenever the module was imported. It has been moved
+  inside `if __name__ == "__main__":`. Importing the module no longer produces
+  filesystem side effects.
+
+- **P1 — Module-level globals no longer mutated at runtime.** `run_tracker.py`
+  previously overwrote six module-level constants (`FOLLOWERS_CSV`,
+  `FOLLOWING_CSV`, `SNAPSHOT_CSV`, `HISTORY_CSV`, `OUTPUT_PDF`) with CLI argument
+  values at runtime. These are now local variables inside `main()`. The
+  module-level constants remain as documented defaults only. `generate_report()`
+  accepts an explicit `output_pdf` parameter instead of reading from module scope.
+
+### Project
+
+#### Added
+
+- `.gitattributes` — normalizes all text file line endings to LF across platforms,
+  resolving the CRLF/LF inconsistency between `scraper.user.js` and `main.js`.
+
+---
+
 ## [4.0.0] — 2026-03-03
 
 ### Userscript (`scraper.user.js` + `main.js`)

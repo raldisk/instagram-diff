@@ -1,6 +1,6 @@
 [project]
 name = "instagram-diff"
-version = "1.0.0"
+version = "4.0.1"
 description = "Deterministic Instagram followers/following diff engine with PDF reporting"
 readme = "README.md"
 requires-python = ">=3.9"

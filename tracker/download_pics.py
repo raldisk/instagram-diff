@@ -20,8 +20,6 @@ FOLLOWERS_CSV = "followers.csv"
 FOLLOWING_CSV = "following.csv"
 PICS_DIR      = "cache-pfp"
 
-os.makedirs(PICS_DIR, exist_ok=True)
-
 def load_pics_map(*csv_paths):
     """Collect {username: picture_url} from one or more export CSVs."""
     data = {}
@@ -64,6 +62,7 @@ def download_all(pics_map):
 
 
 if __name__ == "__main__":
+    os.makedirs(PICS_DIR, exist_ok=True)
     print("Loading CSVs...")
     pics_map = load_pics_map(FOLLOWERS_CSV, FOLLOWING_CSV)
     print(f"Found {len(pics_map)} unique accounts. Downloading to '{PICS_DIR}/'...\n")
